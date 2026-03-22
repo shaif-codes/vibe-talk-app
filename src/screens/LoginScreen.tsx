@@ -5,9 +5,6 @@ import {
     Dimensions,
     Animated,
     Image,
-    KeyboardAvoidingView,
-    Platform,
-    TextInput
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -28,18 +25,13 @@ WebBrowser.maybeCompleteAuthSession();
 const { width, height } = Dimensions.get('window');
 
 const LoginScreen = ({ navigation }: any) => {
-    const [nickname, setNickname] = useState('');
     const [isAlertVisible, setIsAlertVisible] = useState(false);
     const [alertConfig, setAlertConfig] = useState({ title: '', description: '', type: 'error' as any });
 
-    const { loginAsGuest, loginWithGoogle, isLoading: authLoading } = useAuth();
+    const { loginWithGoogle, isLoading: authLoading } = useAuth();
     const { colors, currentColors, isDark, borderRadius } = useTheme();
 
     useEffect(() => {
-        console.log('[DEBUG] Configuring Google Sign-in with:', {
-            webClientId: googleAuthConfigs.webClientId,
-            offlineAccess: true,
-        });
         GoogleSignin.configure({
             webClientId: googleAuthConfigs.webClientId,
             offlineAccess: true,
@@ -51,12 +43,10 @@ const LoginScreen = ({ navigation }: any) => {
         try {
             await GoogleSignin.hasPlayServices();
             const response = await GoogleSignin.signIn();
-            console.log('[DEBUG] Google Sign-in Response:', JSON.stringify(response, null, 2));
 
             const idToken = response.data?.idToken;
 
             if (!idToken) {
-                console.warn('[DEBUG] No ID Token in response. Check if webClientId matches the CLIENT_ID of type "Web application" in Google Console.');
                 throw new Error('No ID Token received from Google');
             }
 
@@ -65,11 +55,6 @@ const LoginScreen = ({ navigation }: any) => {
                 navigation.navigate('ProfileSetup', { firebaseToken: idToken });
             }
         } catch (error: any) {
-            console.error('[DEBUG] Google Sign-in Error Details:', {
-                message: error.message,
-                code: error.code,
-                stack: error.stack
-            });
             setAlertConfig({
                 title: 'Login Failed',
                 description: `Unable to sign in with Google (Error: ${error.code || 'Unknown'}). Please try again.`,
@@ -103,31 +88,6 @@ const LoginScreen = ({ navigation }: any) => {
         outputRange: [0, -20],
     });
 
-    const handleGuestLogin = async () => {
-        if (!nickname.trim()) {
-            setAlertConfig({
-                title: 'Required',
-                description: 'Please enter a nickname to continue as guest.',
-                type: 'info'
-            });
-            setIsAlertVisible(true);
-            return;
-        }
-
-        try {
-            await loginAsGuest(nickname);
-        } catch (error) {
-            setAlertConfig({
-                title: 'Error',
-                description: 'Login failed. Check your internet connection.',
-                type: 'error'
-            });
-            setIsAlertVisible(true);
-        }
-    };
-
-    const isLoading = authLoading;
-
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: currentColors.background }]}>
             {/* Background Blobs */}
@@ -136,113 +96,81 @@ const LoginScreen = ({ navigation }: any) => {
                 <View style={[styles.blob, { bottom: height * 0.3, right: -60, backgroundColor: isDark ? '#a855f722' : '#a855f705', width: 300, height: 300 }]} />
             </View>
 
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={{ flex: 1 }}
-            >
-                <View style={styles.content}>
-                    {/* Logo Section */}
-                    <View style={styles.logoRow}>
-                        <View style={[styles.logoIcon, { backgroundColor: colors.primary }]}>
-                            <Sparkles color="white" size={24} />
-                        </View>
-                        <VibeText variant="display" size="2xl" style={{ marginLeft: 10 }}>VibeTalk</VibeText>
+            <View style={styles.content}>
+                {/* Logo Section */}
+                <View style={styles.logoRow}>
+                    <View style={[styles.logoIcon, { backgroundColor: colors.primary }]}>
+                        <Sparkles color="white" size={24} />
                     </View>
-
-                    {/* Hero Section */}
-                    <View style={styles.heroSection}>
-                        <Animated.View style={{ transform: [{ translateY }] }}>
-                            <View style={styles.heroImageWrapper}>
-                                <LinearGradient
-                                    colors={['rgba(238, 43, 140, 0.2)', 'rgba(168, 85, 247, 0.1)']}
-                                    style={styles.heroGlow}
-                                />
-                                <GlassPanel style={styles.heroPanel}>
-                                    <Image
-                                        source={{ uri: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBhLa63hMlGYQgzPFOSybE5xYBnKe-VMWn69ls7BxqD8RN-5VMZli9xrxVFSGKtnprOZAJbpP5XXe0O0P7ri1JwwyvJ01LsoTxoSniJt__r0N__MRY-VDNscDdCLiqhVibuDIYJ3jf7xWq9gEJHbKiCcvSBzt92TQPVcWYw84HdN1bf2sKk6zJA1mP4avqiv6g7vmLcGZFJ8ddNL3hatR0Us_viYyMPPK4UG5Ah07WOUcPkIqr3-ahZbWWdwGC38VVqI-Tl11IshR4' }}
-                                        style={styles.illustration}
-                                        resizeMode="contain"
-                                    />
-                                </GlassPanel>
-
-                                {/* Floating decorations */}
-                                <View style={[styles.floatingIcon, { top: 0, right: 0 }]}>
-                                    <Heart color={colors.primary} size={20} fill={colors.primary} />
-                                </View>
-                                <View style={[styles.floatingIcon, { bottom: 20, left: -10 }]}>
-                                    <MessageCircle color={colors.accent.blue} size={20} fill={colors.accent.blue} />
-                                </View>
-                            </View>
-                        </Animated.View>
-                    </View>
-
-                    {/* Text content */}
-                    <View style={styles.textContent}>
-                        <VibeText variant="display" size="4xl" style={styles.title}>
-                            Talk to someone. {'\n'}
-                            <VibeText variant="display" size="4xl" color={colors.primary}>Feel less alone.</VibeText>
-                        </VibeText>
-                        <VibeText variant="medium" size="lg" color={currentColors.muted} style={styles.subtitle}>
-                            A safe, privacy-first space for friendly conversations.
-                        </VibeText>
-                    </View>
-
-                    {/* Actions */}
-                    <View style={styles.actions}>
-                        <TextInput
-                            style={[
-                                styles.input,
-                                {
-                                    backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'white',
-                                    borderColor: isDark ? colors.glass.border : '#ddd',
-                                    color: currentColors.text,
-                                    borderRadius: borderRadius.md
-                                }
-                            ]}
-                            placeholder="Enter your nickname..."
-                            placeholderTextColor={currentColors.muted}
-                            value={nickname}
-                            onChangeText={setNickname}
-                        />
-
-                        <VibeButton
-                            title={isLoading ? "Joining..." : "Continue as Guest"}
-                            onPress={handleGuestLogin}
-                            loading={isLoading}
-                        />
-
-                        <VibeButton
-                            variant="outline"
-                            title="Continue with Google"
-                            onPress={handleGoogleLogin}
-                            icon={
-                                <Image
-                                    source={{ uri: 'https://img.icons8.com/color/48/000000/google-logo.png' }}
-                                    style={{ width: 24, height: 24 }}
-                                />
-                            }
-                            style={{
-                                marginTop: 10,
-                                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'white',
-                                borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#eee'
-                            }}
-                        />
-                    </View>
-
-                    {/* Footer */}
-                    <View style={styles.footer}>
-                        <View style={styles.privacyRow}>
-                            <ShieldCheck size={14} color={currentColors.muted} />
-                            <VibeText size="xs" color={currentColors.muted} style={{ marginLeft: 5 }}>
-                                Privacy-first & Anonymous
-                            </VibeText>
-                        </View>
-                        <VibeText size="xs" color={currentColors.muted} style={styles.termsText}>
-                            By continuing, you agree to our Terms and Privacy Policy.
-                        </VibeText>
-                    </View>
+                    <VibeText variant="display" size="2xl" style={{ marginLeft: 10 }}>VibeTalk</VibeText>
                 </View>
-            </KeyboardAvoidingView>
+
+                {/* Hero Section */}
+                <View style={styles.heroSection}>
+                    <Animated.View style={{ transform: [{ translateY }] }}>
+                        <View style={styles.heroImageWrapper}>
+                            <LinearGradient
+                                colors={['rgba(238, 43, 140, 0.2)', 'rgba(168, 85, 247, 0.1)']}
+                                style={styles.heroGlow}
+                            />
+                            <GlassPanel style={styles.heroPanel}>
+                                <Image
+                                    source={{ uri: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBhLa63hMlGYQgzPFOSybE5xYBnKe-VMWn69ls7BxqD8RN-5VMZli9xrxVFSGKtnprOZAJbpP5XXe0O0P7ri1JwwyvJ01LsoTxoSniJt__r0N__MRY-VDNscDdCLiqhVibuDIYJ3jf7xWq9gEJHbKiCcvSBzt92TQPVcWYw84HdN1bf2sKk6zJA1mP4avqiv6g7vmLcGZFJ8ddNL3hatR0Us_viYyMPPK4UG5Ah07WOUcPkIqr3-ahZbWWdwGC38VVqI-Tl11IshR4' }}
+                                    style={styles.illustration}
+                                    resizeMode="contain"
+                                />
+                            </GlassPanel>
+
+                            {/* Floating decorations */}
+                            <View style={[styles.floatingIcon, { top: 0, right: 0 }]}>
+                                <Heart color={colors.primary} size={20} fill={colors.primary} />
+                            </View>
+                            <View style={[styles.floatingIcon, { bottom: 20, left: -10 }]}>
+                                <MessageCircle color={colors.accent.blue} size={20} fill={colors.accent.blue} />
+                            </View>
+                        </View>
+                    </Animated.View>
+                </View>
+
+                {/* Text content */}
+                <View style={styles.textContent}>
+                    <VibeText variant="display" size="4xl" style={styles.title}>
+                        Talk to someone. {'\n'}
+                        <VibeText variant="display" size="4xl" color={colors.primary}>Feel less alone.</VibeText>
+                    </VibeText>
+                    <VibeText variant="medium" size="lg" color={currentColors.muted} style={styles.subtitle}>
+                        A safe, privacy-first space for friendly conversations.
+                    </VibeText>
+                </View>
+
+                {/* Actions */}
+                <View style={styles.actions}>
+                    <VibeButton
+                        title={authLoading ? "Signing in..." : "Continue with Google"}
+                        onPress={handleGoogleLogin}
+                        loading={authLoading}
+                        icon={
+                            <Image
+                                source={{ uri: 'https://img.icons8.com/color/48/000000/google-logo.png' }}
+                                style={{ width: 24, height: 24 }}
+                            />
+                        }
+                    />
+                </View>
+
+                {/* Footer */}
+                <View style={styles.footer}>
+                    <View style={styles.privacyRow}>
+                        <ShieldCheck size={14} color={currentColors.muted} />
+                        <VibeText size="xs" color={currentColors.muted} style={{ marginLeft: 5 }}>
+                            Privacy-first & Anonymous
+                        </VibeText>
+                    </View>
+                    <VibeText size="xs" color={currentColors.muted} style={styles.termsText}>
+                        By continuing, you agree to our Terms and Privacy Policy.
+                    </VibeText>
+                </View>
+            </View>
 
             <VibeAlert
                 visible={isAlertVisible}
@@ -339,14 +267,6 @@ const styles = StyleSheet.create({
     actions: {
         width: '100%',
         marginBottom: 30,
-    },
-    input: {
-        height: 56,
-        paddingHorizontal: 20,
-        borderWidth: 1,
-        marginBottom: 15,
-        fontSize: 16,
-        fontFamily: 'PlusJakartaSans_500Medium',
     },
     footer: {
         alignItems: 'center',

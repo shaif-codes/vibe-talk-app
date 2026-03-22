@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     StyleSheet,
@@ -8,13 +8,16 @@ import {
     Dimensions,
     FlatList,
     RefreshControl,
-    TextInput
+    TextInput,
+    Modal,
+    Animated,
+    Pressable
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../theme';
 import { VibeText } from '../components/VibeText';
-import { Search, Bell, MessageSquare, Compass, User, X, SlidersHorizontal } from 'lucide-react-native';
+import { Search, Bell, MessageSquare, Compass, User, X, SlidersHorizontal, Sparkles } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { containerStyles } from '../configs';
 import { colors } from '../theme/colors';
@@ -22,9 +25,29 @@ import { PersonaDetailModal } from '../components/PersonaDetailModal';
 import { VibeLoader } from '../components/VibeLoader';
 import { VibeAlert } from '../components/VibeAlert';
 import api from '../services/api';
+import { useNotifications } from '../context/NotificationContext';
+import countryData from '../../assets/contryData.json';
 
 const { width } = Dimensions.get('window');
 const COLUMN_WIDTH = (width - 48) / 2;
+const NOTIFICATION_PANEL_WIDTH = width * 0.85;
+
+function formatNotificationTime(createdAt: string): string {
+    try {
+        const date = new Date(createdAt);
+        const now = new Date();
+        const diffMs = now.getTime() - date.getTime();
+        if (diffMs < 60 * 1000) return 'JUST NOW';
+        const mins = Math.floor(diffMs / (60 * 1000));
+        if (mins < 60) return `${mins}M AGO`;
+        const hours = Math.floor(diffMs / (60 * 60 * 1000));
+        if (hours < 24) return `${hours}H AGO`;
+        const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+        return `${days}D AGO`;
+    } catch {
+        return '';
+    }
+}
 
 const MOODS = [
     { id: '1', label: 'All Moods', mood: '' },
@@ -77,9 +100,74 @@ const MOCK_PERSONAS = [
     }
 ];
 
+type NotificationItem = {
+    notificationId: string;
+    type: string;
+    payload: { sessionId?: string; message?: string; senderName?: string; senderAvatar?: string; personaId?: string; [k: string]: any };
+    createdAt: string;
+    status: string;
+};
+
+function NotificationCard({
+    item,
+    isDark,
+    colors,
+    currentColors,
+    formatTime,
+    onPress
+}: {
+    item: NotificationItem;
+    isDark: boolean;
+    colors: typeof import('../theme/colors').colors;
+    currentColors: Record<string, string>;
+    formatTime: (createdAt: string) => string;
+    onPress: () => void;
+}) {
+    const isUnread = item.status !== 'read';
+    const avatarUri = item.payload?.senderAvatar || 'https://via.placeholder.com/64';
+    const senderName = item.payload?.senderName ?? 'Someone';
+    const message = item.payload?.message ?? 'You have a new notification.';
+    return (
+        <TouchableOpacity
+            onPress={onPress}
+            activeOpacity={0.95}
+            style={[
+                styles.notificationCard,
+                {
+                    backgroundColor: isUnread
+                        ? (isDark ? 'rgba(238,43,140,0.1)' : 'rgba(238,43,140,0.08)')
+                        : (isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'),
+                    borderColor: isUnread ? `${colors.primary}4D` : (isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)')
+                }
+            ]}
+        >
+            <View style={styles.notificationCardInner}>
+                <View style={styles.notificationCardAvatarWrap}>
+                    <Image source={{ uri: avatarUri }} style={[styles.notificationCardAvatar, isUnread && { borderColor: colors.primary, borderWidth: 2 }]} />
+                    {isUnread && <View style={[styles.notificationCardUnreadDot, { backgroundColor: colors.primary }]} />}
+                </View>
+                <View style={styles.notificationCardBody}>
+                    <View style={styles.notificationCardRow}>
+                        <VibeText variant="bold" size="md" numberOfLines={1} style={{ flex: 1 }} color={isUnread ? currentColors.text : currentColors.muted}>
+                            {senderName}
+                        </VibeText>
+                        <VibeText size="xs" variant="bold" color={isUnread ? colors.primary : currentColors.muted}>
+                            {formatTime(item.createdAt)}
+                        </VibeText>
+                    </View>
+                    <VibeText size="sm" color={currentColors.muted} numberOfLines={2} style={{ fontStyle: 'italic' }}>
+                        {message}
+                    </VibeText>
+                </View>
+            </View>
+        </TouchableOpacity>
+    );
+}
+
 const HomeScreen = ({ navigation }: any) => {
     const { user } = useAuth();
     const { colors, currentColors, isDark } = useTheme();
+    const { notifications, unreadCount, markNotificationAsRead, markAllAsRead } = useNotifications();
 
     const [personas, setPersonas] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -90,11 +178,31 @@ const HomeScreen = ({ navigation }: any) => {
     const [activeMood, setActiveMood] = useState('');
     const [isSearching, setIsSearching] = useState(false);
     const [isAlertVisible, setIsAlertVisible] = useState(false);
+    const [isNotificationsVisible, setIsNotificationsVisible] = useState(false);
+    const [notificationFilter, setNotificationFilter] = useState<'all' | 'vibes'>('all');
     const [alertConfig, setAlertConfig] = useState({ title: '', description: '', type: 'error' as any });
+    const notificationSlideAnim = useRef(new Animated.Value(NOTIFICATION_PANEL_WIDTH)).current;
 
     useEffect(() => {
         fetchPersonas();
     }, [activeMood]);
+
+    useEffect(() => {
+        if (isNotificationsVisible) {
+            Animated.spring(notificationSlideAnim, {
+                toValue: 0,
+                useNativeDriver: true,
+                tension: 65,
+                friction: 11
+            }).start();
+        } else {
+            Animated.timing(notificationSlideAnim, {
+                toValue: NOTIFICATION_PANEL_WIDTH,
+                duration: 200,
+                useNativeDriver: true
+            }).start();
+        }
+    }, [isNotificationsVisible]);
 
     const fetchPersonas = async (query?: string) => {
         try {
@@ -164,7 +272,17 @@ const HomeScreen = ({ navigation }: any) => {
             <View style={styles.cardInfo}>
                 <View style={styles.nameRow}>
                     <VibeText variant="bold" style={styles.name}>{item.nickname}</VibeText>
-                    <VibeText size="xs">{item.country}</VibeText>
+                    <VibeText size="xs">
+                        {(() => {
+                            if (!item.country) return '';
+                            // Try mapping string to emoji
+                            const countryKey = Object.keys(countryData).find(key => (countryData as any)[key].name === item.country);
+                            if (countryKey) {
+                                return `${(countryData as any)[countryKey].emoji} ${item.country}`;
+                            }
+                            return item.country;
+                        })()}
+                    </VibeText>
                 </View>
                 <VibeText size="xs" color={currentColors.muted} numberOfLines={1}>{item.bio}</VibeText>
             </View>
@@ -178,8 +296,18 @@ const HomeScreen = ({ navigation }: any) => {
                 <View style={styles.headerTop}>
                     <VibeText variant="bold" size="2xl">Discover</VibeText>
                     <View style={styles.headerActions}>
-                        <TouchableOpacity style={[styles.iconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#f5f5f5' }]}>
+                        <TouchableOpacity
+                            style={[styles.iconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#f5f5f5' }]}
+                            onPress={() => setIsNotificationsVisible(true)}
+                        >
                             <Bell size={20} color={currentColors.text} />
+                            {unreadCount > 0 && (
+                                <View style={styles.notificationBadge}>
+                                    <VibeText size="xs" color="white" variant="bold">
+                                        {unreadCount > 9 ? '9+' : unreadCount}
+                                    </VibeText>
+                                </View>
+                            )}
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -310,7 +438,16 @@ const HomeScreen = ({ navigation }: any) => {
                     style={styles.navItem}
                     onPress={() => navigation.navigate('Sessions')}
                 >
-                    <MessageSquare size={24} color={currentColors.muted} />
+                    <View style={styles.navItemIconWrap}>
+                        <MessageSquare size={24} color={currentColors.muted} />
+                        {unreadCount > 0 && (
+                            <View style={[styles.notificationBadge, { backgroundColor: colors.primary }]}>
+                                <VibeText size="xs" color="white" variant="bold">
+                                    {unreadCount > 9 ? '9+' : unreadCount}
+                                </VibeText>
+                            </View>
+                        )}
+                    </View>
                     <VibeText size="xs" color={currentColors.muted} variant="bold" style={styles.navLabel}>CHATS</VibeText>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Profile')}>
@@ -328,6 +465,166 @@ const HomeScreen = ({ navigation }: any) => {
                     navigation.navigate('Chat', { persona });
                 }}
             />
+
+            <Modal
+                visible={isNotificationsVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setIsNotificationsVisible(false)}
+            >
+                <View style={styles.notificationOverlay}>
+                    <Pressable style={StyleSheet.absoluteFill} onPress={() => setIsNotificationsVisible(false)} />
+                    <Animated.View
+                        style={[
+                            styles.notificationPanel,
+                            {
+                                width: NOTIFICATION_PANEL_WIDTH,
+                                backgroundColor: isDark ? 'rgba(10,10,10,0.98)' : currentColors.surface,
+                                borderLeftColor: isDark ? `${colors.primary}4D` : `${colors.primary}30`
+                            },
+                            { transform: [{ translateX: notificationSlideAnim }] }
+                        ]}
+                    >
+                        <View style={[styles.notificationPanelHeader, { borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)' }]}>
+                            <View style={styles.notificationPanelTitleRow}>
+                                <Bell size={28} color={colors.primary} />
+                                <VibeText variant="bold" size="xl">Notifications</VibeText>
+                            </View>
+                            <TouchableOpacity
+                                onPress={() => setIsNotificationsVisible(false)}
+                                style={[styles.notificationCloseBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }]}
+                            >
+                                <X size={22} color={currentColors.text} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView
+                            style={styles.notificationPanelScroll}
+                            contentContainerStyle={styles.notificationPanelScrollContent}
+                            showsVerticalScrollIndicator={false}
+                        >
+                            <View style={[styles.notificationPillsRow, { backgroundColor: isDark ? 'rgba(10,10,10,0.95)' : currentColors.surface }]}>
+                                <TouchableOpacity
+                                    onPress={() => setNotificationFilter('all')}
+                                    style={[
+                                        styles.notificationPill,
+                                        notificationFilter === 'all' && { backgroundColor: colors.primary }
+                                    ]}
+                                >
+                                    <VibeText size="sm" variant="bold" color={notificationFilter === 'all' ? 'white' : currentColors.muted}>All</VibeText>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={() => setNotificationFilter('vibes')}
+                                    style={[
+                                        styles.notificationPill,
+                                        styles.notificationPillInactive,
+                                        { borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' },
+                                        notificationFilter === 'vibes' && { backgroundColor: colors.primary, borderColor: 'transparent' }
+                                    ]}
+                                >
+                                    <VibeText size="sm" variant="bold" color={notificationFilter === 'vibes' ? 'white' : currentColors.muted}>Vibes</VibeText>
+                                </TouchableOpacity>
+                            </View>
+
+                            {(() => {
+                                const filtered = notificationFilter === 'vibes'
+                                    ? notifications.filter((n) => n.type === 'message')
+                                    : notifications;
+                                const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+                                const newest = filtered.filter((n) => n.status !== 'read' || new Date(n.createdAt).getTime() > twoHoursAgo);
+                                const earlier = filtered.filter((n) => n.status === 'read' && new Date(n.createdAt).getTime() <= twoHoursAgo);
+
+                                if (filtered.length === 0) {
+                                    return (
+                                        <View style={styles.notificationEmptyState}>
+                                            <View style={[styles.notificationEmptyIconWrap, { borderColor: `${colors.primary}20`, backgroundColor: `${colors.primary}0D` }]}>
+                                                <Sparkles size={40} color={`${colors.primary}66`} />
+                                            </View>
+                                            <VibeText color={currentColors.muted} style={{ textAlign: 'center', fontStyle: 'italic' }}>
+                                                All caught up!
+                                            </VibeText>
+                                            <VibeText size="sm" variant="bold" color={colors.primary} style={{ marginTop: 8, letterSpacing: 1 }}>
+                                                Time to discover some new vibes.
+                                            </VibeText>
+                                        </View>
+                                    );
+                                }
+
+                                return (
+                                    <>
+                                        {newest.length > 0 && (
+                                            <>
+                                                <VibeText size="xs" variant="bold" color={colors.primary} style={styles.notificationSectionLabel}>
+                                                    NEWEST VIBES
+                                                </VibeText>
+                                                {newest.map((item) => (
+                                                    <NotificationCard
+                                                        key={item.notificationId}
+                                                        item={item}
+                                                        isDark={isDark}
+                                                        colors={colors}
+                                                        currentColors={currentColors}
+                                                        formatTime={formatNotificationTime}
+                                                        onPress={() => {
+                                                            markNotificationAsRead(item.notificationId);
+                                                            setIsNotificationsVisible(false);
+                                                            const p = item.payload;
+                                                            if (p?.sessionId) {
+                                                                const persona = (p.personaId && (p.senderName != null || p.senderAvatar != null))
+                                                                    ? { id: p.personaId, nickname: p.senderName ?? 'Someone', avatarUrl: p.senderAvatar }
+                                                                    : null;
+                                                                navigation.navigate('Chat', { sessionId: p.sessionId, persona: persona ?? undefined });
+                                                            }
+                                                        }}
+                                                    />
+                                                ))}
+                                            </>
+                                        )}
+                                        {earlier.length > 0 && (
+                                            <>
+                                                <VibeText size="xs" variant="bold" color={currentColors.muted} style={[styles.notificationSectionLabel, { marginTop: newest.length > 0 ? 24 : 0 }]}>
+                                                    EARLIER TODAY
+                                                </VibeText>
+                                                {earlier.map((item) => (
+                                                    <NotificationCard
+                                                        key={item.notificationId}
+                                                        item={item}
+                                                        isDark={isDark}
+                                                        colors={colors}
+                                                        currentColors={currentColors}
+                                                        formatTime={formatNotificationTime}
+                                                        onPress={() => {
+                                                            markNotificationAsRead(item.notificationId);
+                                                            setIsNotificationsVisible(false);
+                                                            const p = item.payload;
+                                                            if (p?.sessionId) {
+                                                                const persona = (p.personaId && (p.senderName != null || p.senderAvatar != null))
+                                                                    ? { id: p.personaId, nickname: p.senderName ?? 'Someone', avatarUrl: p.senderAvatar }
+                                                                    : null;
+                                                                navigation.navigate('Chat', { sessionId: p.sessionId, persona: persona ?? undefined });
+                                                            }
+                                                        }}
+                                                    />
+                                                ))}
+                                            </>
+                                        )}
+                                    </>
+                                );
+                            })()}
+                        </ScrollView>
+
+                        <View style={[styles.notificationPanelFooter, { borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)' }]}>
+                            <TouchableOpacity
+                                onPress={() => { markAllAsRead(); setIsNotificationsVisible(false); }}
+                                style={[styles.notificationMarkAllBtn, { borderColor: `${colors.primary}66` }]}
+                                activeOpacity={0.85}
+                            >
+                                <VibeText variant="bold" color={colors.primary}>MARK ALL AS READ</VibeText>
+                            </TouchableOpacity>
+                        </View>
+                    </Animated.View>
+                </View>
+            </Modal>
 
             <VibeAlert
                 visible={isAlertVisible}
@@ -361,6 +658,19 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         justifyContent: 'center',
         alignItems: 'center',
+        position: 'relative',
+    },
+    notificationBadge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        minWidth: 18,
+        height: 18,
+        borderRadius: 9,
+        backgroundColor: colors.accent.red,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 4,
     },
     headerActions: {
         flexDirection: 'row',
@@ -499,6 +809,9 @@ const styles = StyleSheet.create({
     navItem: {
         alignItems: 'center',
     },
+    navItemIconWrap: {
+        position: 'relative',
+    },
     navLabel: {
         marginTop: 4,
         letterSpacing: 1,
@@ -520,6 +833,154 @@ const styles = StyleSheet.create({
     resetBtn: {
         marginTop: 16,
         padding: 12,
+    },
+    notificationOverlay: {
+        flex: 1,
+        flexDirection: 'row',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'flex-end',
+    },
+    notificationPanel: {
+        flex: 1,
+        borderLeftWidth: 1,
+        maxWidth: NOTIFICATION_PANEL_WIDTH,
+    },
+    notificationPanelHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 24,
+        paddingVertical: 20,
+        borderBottomWidth: 1,
+    },
+    notificationPanelTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    notificationCloseBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    notificationPanelScroll: {
+        flex: 1,
+    },
+    notificationPanelScrollContent: {
+        paddingHorizontal: 16,
+        paddingTop: 8,
+        paddingBottom: 24,
+    },
+    notificationPillsRow: {
+        flexDirection: 'row',
+        gap: 12,
+        paddingVertical: 16,
+        paddingRight: 8,
+        marginBottom: 8,
+    },
+    notificationPill: {
+        paddingHorizontal: 24,
+        paddingVertical: 10,
+        borderRadius: 9999,
+    },
+    notificationPillInactive: {
+        borderWidth: 1,
+    },
+    notificationSectionLabel: {
+        letterSpacing: 2,
+        marginBottom: 12,
+        paddingLeft: 8,
+    },
+    notificationEmptyState: {
+        paddingVertical: 48,
+        paddingHorizontal: 24,
+        alignItems: 'center',
+    },
+    notificationEmptyIconWrap: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        borderWidth: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 24,
+    },
+    notificationCard: {
+        borderRadius: 16,
+        borderWidth: 1,
+        padding: 20,
+        marginBottom: 16,
+    },
+    notificationCardInner: {
+        flexDirection: 'row',
+        gap: 20,
+    },
+    notificationCardAvatarWrap: {
+        position: 'relative',
+    },
+    notificationCardAvatar: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+    },
+    notificationCardUnreadDot: {
+        position: 'absolute',
+        bottom: 0,
+        right: 0,
+        width: 14,
+        height: 14,
+        borderRadius: 7,
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.95)',
+    },
+    notificationCardBody: {
+        flex: 1,
+        minWidth: 0,
+        justifyContent: 'center',
+    },
+    notificationCardRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        marginBottom: 4,
+        gap: 8,
+    },
+    notificationPanelFooter: {
+        padding: 24,
+        borderTopWidth: 1,
+    },
+    notificationMarkAllBtn: {
+        borderWidth: 2,
+        borderRadius: 12,
+        paddingVertical: 16,
+        alignItems: 'center',
+    },
+    notificationHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    noNotificationState: {
+        paddingVertical: 24,
+        alignItems: 'center',
+    },
+    notificationItem: {
+        borderWidth: 1,
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 10,
+        gap: 4,
+    },
+    closeNotificationBtn: {
+        marginTop: 6,
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingVertical: 10,
+        alignItems: 'center'
     }
 });
 

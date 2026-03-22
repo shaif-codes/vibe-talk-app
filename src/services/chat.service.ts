@@ -10,6 +10,16 @@ export interface ChatSession {
     totalSeconds: number;
 }
 
+/** Session details from GET /chat/sessions/:id (includes populated persona) */
+export interface SessionDetails extends ChatSession {
+    persona?: {
+        _id?: string;
+        id?: string;
+        nickname?: string;
+        avatarUrl?: string;
+    };
+}
+
 export interface Message {
     id: string;
     sender: 'user' | 'persona';
@@ -23,7 +33,7 @@ class ChatService {
         return response.data.session;
     }
 
-    async getSession(sessionId: string): Promise<ChatSession> {
+    async getSession(sessionId: string): Promise<SessionDetails> {
         const response = await api.get(`/chat/sessions/${sessionId}`);
         return response.data.session;
     }
@@ -35,6 +45,11 @@ class ChatService {
 
     async endSession(sessionId: string): Promise<void> {
         await api.delete(`/chat/sessions/${sessionId}`);
+    }
+
+    async extendSession(sessionId: string): Promise<ChatSession> {
+        const response = await api.post(`/chat/sessions/${sessionId}/extend`);
+        return response.data.session;
     }
 
     async getSessions(): Promise<ChatSession[]> {

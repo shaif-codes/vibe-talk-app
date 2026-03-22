@@ -1,7 +1,7 @@
 import { ViewStyle } from 'react-native';
 
 export const containerStyles: ViewStyle = {
-    marginTop: '1%',
+    // marginTop: '1%',
     flex: 1,
 };
 

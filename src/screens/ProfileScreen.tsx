@@ -33,7 +33,8 @@ import {
     Globe,
     Monitor,
     Check,
-    X
+    X,
+    Wallet
 } from 'lucide-react-native';
 import { containerStyles } from '../configs';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -193,10 +194,10 @@ const ProfileScreen = ({ navigation }: any) => {
                         <VibeText variant="bold" size="lg">{stats.streaks}</VibeText>
                         <VibeText size="xs" color={currentColors.muted}>Streaks</VibeText>
                     </View>
-                    <View style={[styles.statBox, { backgroundColor: currentColors.surface }]}>
-                        <VibeText variant="bold" size="lg">{stats.activeTime}</VibeText>
-                        <VibeText size="xs" color={currentColors.muted}>Active</VibeText>
-                    </View>
+                    <TouchableOpacity style={[styles.statBox, { backgroundColor: currentColors.surface }]} onPress={() => navigation.navigate('Wallet')}>
+                        <VibeText variant="bold" size="lg">{user?.walletBalance?.toLocaleString() || '0'}</VibeText>
+                        <VibeText size="xs" color={currentColors.muted}>Coins</VibeText>
+                    </TouchableOpacity>
                 </View>
 
                 {/* Settings Groups */}
@@ -205,6 +206,7 @@ const ProfileScreen = ({ navigation }: any) => {
                         ACCOUNT & PREFERENCES
                     </VibeText>
                     <View style={[styles.group, { backgroundColor: currentColors.surface }]}>
+                        <SettingItem icon={Wallet} title="Wallet & Coins" value={`${user?.walletBalance || 0} Coins`} onPress={() => navigation.navigate('Wallet')} />
                         <SettingItem icon={User} title="Edit Profile" onPress={() => navigation.navigate('ProfileSetup')} />
                         <SettingItem icon={Heart} title="Match Preferences" onPress={() => navigation.navigate('Preferences')} />
                         <SettingItem icon={Bell} title="Notifications" value="All On" />
@@ -229,7 +231,7 @@ const ProfileScreen = ({ navigation }: any) => {
                             onPress={toggleTheme}
                         />
                         <SettingItem icon={ShieldCheck} title="Privacy Center" />
-                        <SettingItem icon={MessageCircle} title="Support & Feedback" />
+                        <SettingItem icon={MessageCircle} title="Support & Feedback" onPress={() => navigation.navigate('Support')} />
                         <SettingItem
                             icon={LogOut}
                             title="Delete Account"

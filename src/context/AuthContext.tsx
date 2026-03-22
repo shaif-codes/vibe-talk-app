@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import api from '../services/api';
+import notificationService from '../services/notificationService';
+import crashlytics from '@react-native-firebase/crashlytics';
 import { auth } from '../configs/firebase';
 import {
     onAuthStateChanged,
@@ -9,6 +11,7 @@ import {
     GoogleAuthProvider,
     signOut as firebaseSignOut
 } from 'firebase/auth';
+import socketService from '../services/socket';
 
 interface User {
     id: string;
@@ -21,6 +24,7 @@ interface User {
     age?: string;
     gender?: string;
     language?: string;
+    walletBalance?: number;
     preferences?: {
         talkTo: string[];
         conversationType: string[];
@@ -33,7 +37,6 @@ interface AuthContextType {
     isLoading: boolean;
     themePreference: 'light' | 'dark' | 'system';
     setThemePreference: (pref: 'light' | 'dark' | 'system') => Promise<void>;
-    loginAsGuest: (nickname: string) => Promise<void>;
     loginWithGoogle: (firebaseToken: string) => Promise<{ requiresSignup?: boolean }>;
     updateUserData: (data: Partial<User>) => Promise<void>;
     logout: () => Promise<void>;
@@ -45,6 +48,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [user, setUser] = useState<User | null>(null);
     const [themePreference, setThemePreferenceState] = useState<'light' | 'dark' | 'system'>('system');
     const [isLoading, setIsLoading] = useState(true);
+    // Guard flag: prevents onAuthStateChanged from racing with loginWithGoogle
+    const isHandlingLogin = useRef(false);
 
     useEffect(() => {
         // Load theme preference early
@@ -61,32 +66,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Listen for Firebase Auth changes
         const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
             if (firebaseUser) {
+                // Skip if loginWithGoogle is currently handling auth to avoid race condition
+                if (isHandlingLogin.current) return;
                 try {
                     const token = await firebaseUser.getIdToken();
                     await SecureStore.setItemAsync('authToken', token);
 
-                    // Fetch user details from our backend
+                    // Fetch user details from our backend (app resume / token refresh)
                     const response = await api.get('/auth/me');
                     setUser({ ...response.data.user, isGuest: false });
                 } catch (error) {
                     console.log('Firebase user detected, pending backend sync');
                 }
             } else {
-                // Not in Firebase, check if there's a guest session
-                const guestUserStr = await SecureStore.getItemAsync('userSession');
-                if (guestUserStr) {
-                    const userData = JSON.parse(guestUserStr);
-                    if (userData.isGuest) {
-                        setUser(userData);
-                        if (userData.themePreference) {
-                            setThemePreferenceState(userData.themePreference);
-                        }
-                    } else {
-                        setUser(null);
-                    }
-                } else {
-                    setUser(null);
-                }
+                setUser(null);
             }
             setIsLoading(false);
         });
@@ -94,45 +87,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return unsubscribe;
     }, []);
 
-    const loginAsGuest = async (nickname: string) => {
-        setIsLoading(true);
-        try {
-            // Call Guest Signup API
-            const response = await api.post('/auth/guest', {
-                nickname,
-                age: '22-25' // Default for guest quick start
-            });
-
-            const { user: userData, token } = response.data;
-
-            // Store session
-            if (token) {
-                await SecureStore.setItemAsync('authToken', token);
-            }
-
-            await SecureStore.setItemAsync('userSession', JSON.stringify(userData));
-
-            // For dev/test mode API testing
-            if (__DEV__) {
-                await SecureStore.setItemAsync('guestUserId', userData.id);
-            }
-
-            setUser({ ...userData, token, isGuest: true });
-
-        } catch (error) {
-            console.error('Guest login failed:', error);
-            throw error;
-        } finally {
-            setIsLoading(false);
-        }
-    };
     const loginWithGoogle = async (googleIdToken: string) => {
         setIsLoading(true);
+        isHandlingLogin.current = true;
         try {
+            crashlytics().log('Attempting Google login via Firebase SDK');
+            
             // 1. Sign in to Firebase on the frontend
             const credential = GoogleAuthProvider.credential(googleIdToken);
             const userCredential = await signInWithCredential(auth, credential);
             const firebaseToken = await userCredential.user.getIdToken();
+
+            crashlytics().log('Firebase login successful, attempting Backend sync');
 
             // 2. Authenticate with our backend using the Firebase ID Token
             const response = await api.post('/auth/login', { firebaseToken });
@@ -142,14 +108,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await SecureStore.setItemAsync('userSession', JSON.stringify({ ...userData, isGuest: false }));
 
             setUser({ ...userData, token: firebaseToken, isGuest: false });
+
+            // Register for push notifications
+            notificationService.registerForPushNotifications().catch(err => {
+                console.error('Failed to register for push notifications:', err);
+                crashlytics().recordError(err);
+            });
+
             return { requiresSignup: false };
         } catch (error: any) {
             if (error.response?.status === 404 && error.response?.data?.requiresSignup) {
                 return { requiresSignup: true };
             }
+            crashlytics().log('Google login completely failed either natively or via API');
+            crashlytics().recordError(error);
+            
             console.error('Google login failed:', error);
             throw error;
         } finally {
+            isHandlingLogin.current = false;
             setIsLoading(false);
         }
     };
@@ -178,11 +155,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const logout = async () => {
         setIsLoading(true);
         try {
+            // Unregister FCM token before logout
+            await notificationService.unregisterToken().catch(err => {
+                console.error('Failed to unregister FCM token:', err);
+            });
+
             await firebaseSignOut(auth);
             await SecureStore.deleteItemAsync('authToken');
             await SecureStore.deleteItemAsync('userSession');
-            await SecureStore.deleteItemAsync('guestUserId');
             setUser(null);
+            socketService.logout();
         } catch (error) {
             console.error('Logout failed:', error);
         } finally {
@@ -196,7 +178,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isLoading,
             themePreference,
             setThemePreference,
-            loginAsGuest,
             loginWithGoogle,
             updateUserData,
             logout

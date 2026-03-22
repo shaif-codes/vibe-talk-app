@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     View,
     StyleSheet,
@@ -24,9 +24,21 @@ import { containerStyles } from '../configs';
 import chatService, { ChatSession } from '../services/chat.service';
 import { formatDistanceToNow } from 'date-fns';
 import { VibeAlert } from '../components/VibeAlert';
+import { useNotifications } from '../context/NotificationContext';
 
 const SessionsScreen = ({ navigation }: any) => {
     const { colors, currentColors, isDark } = useTheme();
+    const { notifications, unreadCount } = useNotifications();
+    const unreadBySessionId = useMemo(() => {
+        const map: Record<string, number> = {};
+        notifications.forEach((n) => {
+            if (n.status !== 'read' && n.payload?.sessionId) {
+                const id = n.payload.sessionId;
+                map[id] = (map[id] ?? 0) + 1;
+            }
+        });
+        return map;
+    }, [notifications]);
     const [sessions, setSessions] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -70,6 +82,7 @@ const SessionsScreen = ({ navigation }: any) => {
         const isActive = item.status === 'active';
         const persona = item.persona;
         const timeAgo = item.startTime ? formatDistanceToNow(new Date(item.startTime), { addSuffix: true }) : '';
+        const sessionUnread = unreadBySessionId[item.id] ?? 0;
 
         return (
             <TouchableOpacity
@@ -83,6 +96,11 @@ const SessionsScreen = ({ navigation }: any) => {
                         style={styles.avatar}
                     />
                     {isActive && <View style={[styles.activeDot, { backgroundColor: colors.accent.green || '#4ade80', borderColor: currentColors.surface }]} />}
+                    {sessionUnread > 0 && (
+                        <View style={[styles.sessionUnreadBadge, { backgroundColor: colors.primary }]}>
+                            <VibeText size="xs" color="white" variant="bold">{sessionUnread > 99 ? '99+' : sessionUnread}</VibeText>
+                        </View>
+                    )}
                 </View>
 
                 <View style={styles.sessionInfo}>
@@ -117,7 +135,14 @@ const SessionsScreen = ({ navigation }: any) => {
                     <TouchableOpacity onPress={() => navigation.goBack()} style={[styles.iconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#eee' }]}>
                         <ChevronLeft size={20} color={currentColors.text} />
                     </TouchableOpacity>
-                    <VibeText variant="bold" size="lg">Your Vibes</VibeText>
+                    <View style={styles.headerTitleRow}>
+                        <VibeText variant="bold" size="lg">Your Vibes</VibeText>
+                        {unreadCount > 0 && (
+                            <View style={[styles.unreadBadge, { backgroundColor: colors.primary }]}>
+                                <VibeText size="xs" color="white" variant="bold">{unreadCount > 99 ? '99+' : unreadCount}</VibeText>
+                            </View>
+                        )}
+                    </View>
                     <TouchableOpacity style={[styles.iconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#eee' }]}>
                         <Search size={20} color={currentColors.text} />
                     </TouchableOpacity>
@@ -156,7 +181,16 @@ const SessionsScreen = ({ navigation }: any) => {
                     <VibeText size="xs" color={currentColors.muted} variant="bold" style={styles.navLabel}>DISCOVER</VibeText>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.navItem}>
-                    <MessageSquare size={24} color={colors.primary} />
+                    <View style={styles.navItemIconWrap}>
+                        <MessageSquare size={24} color={colors.primary} />
+                        {unreadCount > 0 && (
+                            <View style={[styles.unreadBadgeNav, { backgroundColor: colors.primary }]}>
+                                <VibeText size="xs" color="white" variant="bold">
+                                    {unreadCount > 9 ? '9+' : unreadCount}
+                                </VibeText>
+                            </View>
+                        )}
+                    </View>
                     <VibeText size="xs" color={colors.primary} variant="bold" style={styles.navLabel}>CHATS</VibeText>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Profile')}>
@@ -198,6 +232,19 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    headerTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    unreadBadge: {
+        minWidth: 22,
+        height: 22,
+        borderRadius: 11,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 6,
+    },
     centerContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -232,6 +279,17 @@ const styles = StyleSheet.create({
         height: 14,
         borderRadius: 7,
         borderWidth: 2,
+    },
+    sessionUnreadBadge: {
+        position: 'absolute',
+        top: -2,
+        right: -2,
+        minWidth: 20,
+        height: 20,
+        borderRadius: 10,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 5,
     },
     sessionInfo: {
         flex: 1,
@@ -288,6 +346,20 @@ const styles = StyleSheet.create({
     },
     navItem: {
         alignItems: 'center',
+    },
+    navItemIconWrap: {
+        position: 'relative',
+    },
+    unreadBadgeNav: {
+        position: 'absolute',
+        top: -4,
+        right: -8,
+        minWidth: 18,
+        height: 18,
+        borderRadius: 9,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 4,
     },
     navLabel: {
         marginTop: 4,

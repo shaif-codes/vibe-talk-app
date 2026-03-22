@@ -12,6 +12,8 @@ import {
     Dimensions,
     Animated,
     Easing,
+    AppState,
+    AppStateStatus,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -25,15 +27,18 @@ import {
     Mic,
     Send,
     ShieldCheck,
+    Check,
+    CheckCheck,
 } from 'lucide-react-native';
 import { containerStyles } from '../configs';
 import { colors } from '../theme/colors';
-import { chatService, Message, ChatSession } from '../services/chat.service';
+import { chatService, Message, ChatSession, SessionDetails } from '../services/chat.service';
 import socketService from '../services/socket';
 import { VibeLoader } from '../components/VibeLoader';
 import { VibeAlert } from '../components/VibeAlert';
 import { PlusCircle } from 'lucide-react-native';
 import { useHeaderHeight } from '@react-navigation/elements';
+import { useNotifications } from '../context/NotificationContext';
 
 const { width } = Dimensions.get('window');
 
@@ -45,16 +50,20 @@ const ICEBREAKERS = [
 ];
 
 const ChatScreen = ({ navigation, route }: any) => {
-    const { persona } = route.params || {};
+    const { persona: paramPersona, sessionId: paramSessionId } = route.params || {};
+    const { user, updateUserData } = useAuth();
     const { colors, currentColors, isDark } = useTheme();
+    const { markNotificationsAsReadBySessionId } = useNotifications();
     const [message, setMessage] = useState('');
     const [history, setHistory] = useState<any[]>([]);
     const [session, setSession] = useState<ChatSession | null>(null);
+    /** Persona from session when opened by sessionId; otherwise use param persona */
+    const [displayPersona, setDisplayPersona] = useState<{ id?: string; _id?: string; nickname?: string; avatarUrl?: string } | null>(paramPersona ?? null);
     const [loading, setLoading] = useState(true);
     const [isTyping, setIsTyping] = useState(false);
     const [remainingTime, setRemainingTime] = useState(0);
     const [isAlertVisible, setIsAlertVisible] = useState(false);
-    const [alertConfig, setAlertConfig] = useState({ title: '', description: '', type: 'info' as any });
+    const [alertConfig, setAlertConfig] = useState<any>({ title: '', description: '', type: 'info' });
     const headerHeight = useHeaderHeight();
 
     // Animation for timer
@@ -62,34 +71,89 @@ const ChatScreen = ({ navigation, route }: any) => {
     const pulseAnim = useRef<Animated.CompositeAnimation | null>(null);
 
     const flatListRef = useRef<FlatList>(null);
+    const activeSessionIdRef = useRef<string | null>(null);
 
     useEffect(() => {
         initChat();
+
+        const handleAppStateChange = (nextAppState: AppStateStatus) => {
+            if (nextAppState === 'active' && activeSessionIdRef.current) {
+                console.log('[ChatScreen] App returned to foreground, re-joining session...');
+                socketService.emit('join-session', { sessionId: activeSessionIdRef.current });
+                refreshHistory();
+            }
+        };
+
+        const subscription = AppState.addEventListener('change', handleAppStateChange);
+
         return () => {
+            subscription.remove();
             if (pulseAnim.current) pulseAnim.current.stop();
+            if (activeSessionIdRef.current) {
+                socketService.emit('leave-session', { sessionId: activeSessionIdRef.current });
+                activeSessionIdRef.current = null;
+            }
             socketService.off('message-sent');
             socketService.off('persona-response');
             socketService.off('typing');
             socketService.off('timer-update');
             socketService.off('session-expired');
             socketService.off('error');
-            socketService.disconnect();
         };
-    }, []);
+    }, [paramSessionId]);
+
+    const refreshHistory = async () => {
+        if (!activeSessionIdRef.current) return;
+        try {
+            const messages = await chatService.getMessages(activeSessionIdRef.current);
+            setHistory(messages.map(m => ({
+                id: m.id,
+                text: m.content,
+                sender: m.sender,
+                status: 'delivered',
+                time: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            })));
+        } catch (error) {
+            console.error('Error refreshing history:', error);
+        }
+    };
 
     const initChat = async () => {
         try {
             setLoading(true);
 
-            // 1. Start or join session
             let activeSession: ChatSession;
-            activeSession = await chatService.startSession(persona.id || persona._id);
-            setSession(activeSession);
-            setRemainingTime(activeSession.remainingSeconds);
+            if (paramSessionId) {
+                const details: SessionDetails = await chatService.getSession(paramSessionId);
+                activeSession = details;
+                setSession(details);
+                setRemainingTime(details.remainingSeconds ?? 0);
+                if (details.persona) {
+                    setDisplayPersona({
+                        id: details.persona.id ?? details.persona._id,
+                        _id: details.persona._id ?? details.persona.id,
+                        nickname: details.persona.nickname,
+                        avatarUrl: details.persona.avatarUrl
+                    });
+                }
+            } else {
+                const persona = paramPersona;
+                if (!persona?.id && !persona?._id) {
+                    setLoading(false);
+                    return;
+                }
+                activeSession = await chatService.startSession(persona.id || persona._id);
+                setSession(activeSession);
+                setRemainingTime(activeSession.remainingSeconds);
+                setDisplayPersona(persona);
+            }
 
-            // 2. Connect socket
-            await socketService.authenticate();
+            // 2. Join active session on already-connected app-level socket
             socketService.emit('join-session', { sessionId: activeSession.id });
+            activeSessionIdRef.current = activeSession.id;
+
+            // Mark all notifications for this session as read (user is viewing the chat)
+            markNotificationsAsReadBySessionId(activeSession.id);
 
             // 3. Load history
             const messages = await chatService.getMessages(activeSession.id);
@@ -97,17 +161,36 @@ const ChatScreen = ({ navigation, route }: any) => {
                 id: m.id,
                 text: m.content,
                 sender: m.sender,
+                status: 'delivered',
                 time: new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             })));
 
             // 4. Setup listeners
             socketService.on('message-sent', (data) => {
-                setHistory(prev => [...prev, {
-                    id: data.id,
-                    text: data.content,
-                    sender: 'user',
-                    time: new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                }]);
+                setHistory(prev => {
+                    // Try to find the optimistic message by clientMsgId
+                    const existingIdx = prev.findIndex(m => m.id === data.clientMsgId);
+
+                    if (existingIdx !== -1) {
+                        const newHistory = [...prev];
+                        newHistory[existingIdx] = {
+                            ...newHistory[existingIdx],
+                            id: data.id, // Update to real DB ID
+                            status: 'delivered',
+                            time: new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        };
+                        return newHistory;
+                    }
+
+                    // Fallback (e.g. if message was sent from another device/reloaded)
+                    return [...prev, {
+                        id: data.id,
+                        text: data.content,
+                        sender: 'user',
+                        status: 'delivered',
+                        time: new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    }];
+                });
             });
 
             socketService.on('persona-response', (data) => {
@@ -124,6 +207,7 @@ const ChatScreen = ({ navigation, route }: any) => {
             });
 
             socketService.on('timer-update', (data) => {
+                console.log('Timer update:', data.remainingSeconds);
                 setRemainingTime(data.remainingSeconds);
             });
 
@@ -132,13 +216,18 @@ const ChatScreen = ({ navigation, route }: any) => {
                 setAlertConfig({
                     title: 'Time Up!',
                     description: data.message || 'Your free vibes are over. Ready for more?',
-                    type: 'error'
+                    type: 'error',
+                    buttonText: 'Extend (25 Coins)',
                 });
                 setIsAlertVisible(true);
             });
 
             socketService.on('error', (data) => {
                 console.error('Socket Error:', data.message);
+                // Handle delivery failure
+                if (data.message === 'Failed to send message') {
+                    setHistory(prev => prev.map(m => m.status === 'sending' ? { ...m, status: 'error' } : m));
+                }
             });
 
         } catch (error) {
@@ -146,7 +235,8 @@ const ChatScreen = ({ navigation, route }: any) => {
             setAlertConfig({
                 title: 'Connection Failed',
                 description: 'Failed to initialize chat session. Please try again.',
-                type: 'error'
+                type: 'error',
+                buttonText: 'Try Again'
             });
             setIsAlertVisible(true);
         } finally {
@@ -156,6 +246,7 @@ const ChatScreen = ({ navigation, route }: any) => {
 
     // Timer Animation Trigger
     useEffect(() => {
+        console.log('Remaining time:', remainingTime);
         if (remainingTime <= 15 && remainingTime > 0) {
             // Adjust pulse speed based on urgency
             const duration = remainingTime <= 5 ? 250 : 400;
@@ -200,14 +291,31 @@ const ChatScreen = ({ navigation, route }: any) => {
     }, [remainingTime]);
 
     const sendMessage = () => {
-        if (!message.trim() || !session) return;
+        const text = message.trim();
+        if (!text || !session) return;
+
+        // Optimistic update
+        const clientMsgId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const newMsg = {
+            id: clientMsgId,
+            text: text,
+            sender: 'user',
+            status: 'sending',
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+
+        setHistory(prev => [...prev, newMsg]);
+        setMessage('');
 
         socketService.emit('send-message', {
             sessionId: session.id,
-            message: message.trim()
+            message: text,
+            clientMsgId: clientMsgId
         });
 
-        setMessage('');
+        // Clear typing status immediately on send
+        if ((global as any).typingTimeout) clearTimeout((global as any).typingTimeout);
+        socketService.emit('typing', { sessionId: session.id, isTyping: false });
     };
 
     const leaveChat = async () => {
@@ -242,11 +350,22 @@ const ChatScreen = ({ navigation, route }: any) => {
                 </View>
                 <View style={styles.msgMeta}>
                     <VibeText size="xs" color={currentColors.muted}>{item.time}</VibeText>
-                    {isUser && <ShieldCheck size={12} color={colors.primary} style={{ marginLeft: 4 }} />}
+                    {isUser && (
+                        <View style={{ marginLeft: 4 }}>
+                            {item.status === 'sending' ? (
+                                <Check size={12} color={currentColors.muted} />
+                            ) : item.status === 'error' ? (
+                                <VibeText size="xs" color={colors.accent.red}>Failed</VibeText>
+                            ) : (
+                                <CheckCheck size={12} color={colors.primary} />
+                            )}
+                        </View>
+                    )}
                 </View>
             </View>
         );
     };
+
 
     if (loading) {
         return (
@@ -267,10 +386,10 @@ const ChatScreen = ({ navigation, route }: any) => {
 
                     <View style={{ alignItems: 'center' }}>
                         <View style={styles.nameRow}>
-                            <VibeText variant="bold" size="sm">{persona?.nickname || 'Stranger'}</VibeText>
+                            <VibeText variant="bold" size="sm">{displayPersona?.nickname || 'Stranger'}</VibeText>
                         </View>
                         <VibeText size="xs" color={colors.primary} variant="semiBold" style={{ letterSpacing: 1 }}>
-                            END-TO-END ENCRYPTED
+                            <ShieldCheck size={12} color={colors.primary} /> END-TO-END ENCRYPTED
                         </VibeText>
                     </View>
 
@@ -293,7 +412,15 @@ const ChatScreen = ({ navigation, route }: any) => {
                             {remainingTime > 0 ? formatTime(remainingTime) : '00:00'} LEFT
                         </VibeText>
                         {remainingTime === 0 && (
-                            <TouchableOpacity style={{ marginLeft: 8 }} onPress={() => setIsAlertVisible(true)}>
+                            <TouchableOpacity style={{ marginLeft: 8 }} onPress={() => {
+                                setAlertConfig({
+                                    title: 'Time Up!',
+                                    description: 'Your free vibes are over. Ready for more?',
+                                    type: 'error',
+                                    buttonText: 'Extend (25 Coins)',
+                                });
+                                setIsAlertVisible(true);
+                            }}>
                                 <PlusCircle size={14} color="white" />
                             </TouchableOpacity>
                         )}
@@ -320,34 +447,38 @@ const ChatScreen = ({ navigation, route }: any) => {
                             </VibeText>
                         </View>
                     )}
-                    onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+                    // Removed forced scrolling on content size change to avoid jumping
                     ListFooterComponent={() => isTyping ? (
                         <View style={[styles.msgWrapper, { alignItems: 'flex-start' }]}>
-                            <VibeText size="xs" color={currentColors.muted}>{persona?.nickname} is typing...</VibeText>
+                            <VibeText size="xs" color={currentColors.muted}>{displayPersona?.nickname} is typing...</VibeText>
                         </View>
                     ) : null}
                 />
 
                 {/* Footer / Input Area */}
                 <View style={styles.footer}>
-                    <VibeText variant="bold" size="xs" color={currentColors.muted} style={styles.icebreakerTitle}>
-                        BREAK THE ICE
-                    </VibeText>
-                    <FlatList
-                        horizontal
-                        data={ICEBREAKERS}
-                        keyExtractor={item => item}
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.icebreakerList}
-                        renderItem={({ item }) => (
-                            <TouchableOpacity
-                                onPress={() => setMessage(item)}
-                                style={[styles.icebreakerChip, { borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#ddd', backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'white' }]}
-                            >
-                                <VibeText size="xs" variant="medium">{item}</VibeText>
-                            </TouchableOpacity>
-                        )}
-                    />
+                    {!history.some(m => m.sender === 'user') && (
+                        <>
+                            <VibeText variant="bold" size="xs" color={currentColors.muted} style={styles.icebreakerTitle}>
+                                BREAK THE ICE
+                            </VibeText>
+                            <FlatList
+                                horizontal
+                                data={ICEBREAKERS}
+                                keyExtractor={item => item}
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.icebreakerList}
+                                renderItem={({ item }) => (
+                                    <TouchableOpacity
+                                        onPress={() => setMessage(item)}
+                                        style={[styles.icebreakerChip, { borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#ddd', backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'white' }]}
+                                    >
+                                        <VibeText size="xs" variant="medium">{item}</VibeText>
+                                    </TouchableOpacity>
+                                )}
+                            />
+                        </>
+                    )}
 
                     <View style={styles.inputRow}>
                         <TouchableOpacity style={[styles.inputIconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#eee' }]}>
@@ -366,7 +497,19 @@ const ChatScreen = ({ navigation, route }: any) => {
                                 placeholder={remainingTime > 0 ? "Vibe here..." : "Session expired"}
                                 placeholderTextColor={isDark ? '#555' : '#aaa'}
                                 value={message}
-                                onChangeText={setMessage}
+                                onChangeText={(text) => {
+                                    setMessage(text);
+                                    // Notify backend user is typing
+                                    if (activeSessionIdRef.current) {
+                                        socketService.emit('typing', { sessionId: activeSessionIdRef.current, isTyping: true });
+                                        
+                                        // Reset idle timer to send typing:false after 3s
+                                        if ((global as any).typingTimeout) clearTimeout((global as any).typingTimeout);
+                                        (global as any).typingTimeout = setTimeout(() => {
+                                            socketService.emit('typing', { sessionId: activeSessionIdRef.current, isTyping: false });
+                                        }, 3000);
+                                    }
+                                }}
                                 onSubmitEditing={sendMessage}
                                 editable={remainingTime > 0}
                             />
@@ -400,14 +543,48 @@ const ChatScreen = ({ navigation, route }: any) => {
                 type={alertConfig.type}
                 title={alertConfig.title}
                 description={alertConfig.description}
-                buttonText={remainingTime === 0 ? "Extend Vibe" : "Sweet!"}
-                onButtonPress={() => {
+                buttonText={alertConfig.buttonText || "Sweet!"}
+                onButtonPress={async () => {
                     if (remainingTime === 0 && alertConfig.title === 'Time Up!') {
-                        setAlertConfig({
-                            title: 'Coming Soon',
-                            description: 'Payment integration is in development.',
-                            type: 'info'
-                        });
+                        try {
+                            const newSession = await chatService.extendSession(session!.id);
+
+                            if (user?.walletBalance !== undefined) {
+                                updateUserData({ walletBalance: user.walletBalance - 25 });
+                            }
+
+                            setAlertConfig({
+                                title: 'Vibe Extended! 🎉',
+                                description: '25 coins have been deducted. Enjoy your chat!',
+                                type: 'success',
+                                buttonText: 'Sweet!',
+                            });
+                            setRemainingTime(newSession.remainingSeconds);
+
+                            // Immediately resync socket to join room again if it had previously errored/disconnected on timer expiry
+                            socketService.emit('join-session', { sessionId: session!.id });
+                            activeSessionIdRef.current = session!.id;
+
+                            // Refresh chat history in case we missed messages in the dormant state
+                            refreshHistory();
+
+                        } catch (error: any) {
+                            const errorData = error.response?.data;
+                            const msg = errorData?.message || errorData?.error || error.message || 'Failed to extend session';
+                            const isInsufficient = msg.toLowerCase().includes('insufficient');
+
+                            setAlertConfig({
+                                title: isInsufficient ? 'Out of Coins 🪙' : 'Error',
+                                description: isInsufficient
+                                    ? 'You need 25 coins to continue. Hit the wallet to fuel up your vibes!'
+                                    : 'Something went wrong. Please try again.',
+                                type: 'error',
+                                buttonText: isInsufficient ? 'Go to Wallet' : 'Try Again',
+                            });
+                        }
+                    } else if (alertConfig.buttonText === 'Go to Wallet') {
+                        setIsAlertVisible(false);
+                        navigation.navigate('Wallet');
                     } else {
                         setIsAlertVisible(false);
                         if (alertConfig.title === 'Connection Failed') {
@@ -502,7 +679,7 @@ const styles = StyleSheet.create({
     },
     footer: {
         paddingHorizontal: 20,
-        paddingBottom: Platform.OS === 'ios' ? 20 : 30,
+        paddingBottom: 20,
         backgroundColor: 'transparent',
     },
     icebreakerTitle: {

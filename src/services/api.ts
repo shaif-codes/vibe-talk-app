@@ -2,17 +2,23 @@ import axios from 'axios';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import crashlytics from '@react-native-firebase/crashlytics';
 
 // Determine base URL based on environment
 const getBaseUrl = () => {
-    // If running in Expo Go on physical device, use host machine IP
+    // 1. Prioritize environment variable if set
+    if (process.env.EXPO_PUBLIC_API_URL) {
+        return process.env.EXPO_PUBLIC_API_URL;
+    }
+
+    // 2. If running in Expo Go on physical device, use host machine IP
     const hostUri = Constants.expoConfig?.hostUri;
     if (hostUri) {
         const ip = hostUri.split(':')[0];
         return `http://${ip}:5001/api`;
     }
 
-    // Fallback for simulators
+    // 3. Fallback for simulators
     if (Platform.OS === 'android') {
         return 'http://10.0.2.2:5001/api';
     }
@@ -62,5 +68,28 @@ api.interceptors.request.use(async (config) => {
 
     return config;
 });
+
+// Add Crashlytics response interception for logging network errors!
+api.interceptors.response.use(
+    (response) => {
+        // Success: Log the successful request as a breadcrumb
+        const url = response.config.url || 'unknown';
+        crashlytics().log(`API Success: ${response.config.method?.toUpperCase()} ${url} [Status: ${response.status}]`);
+        return response;
+    },
+    (error) => {
+        // Error: Log the failure and record the error natively
+        const url = error.config?.url || 'unknown';
+        const method = error.config?.method?.toUpperCase() || 'UNKNOWN';
+        const status = error.response?.status || 'network_error';
+        
+        crashlytics().log(`API Failure: ${method} ${url} [Status: ${status}]`);
+        
+        // Also record this as a non-fatal error to track it
+        crashlytics().recordError(error);
+        
+        return Promise.reject(error);
+    }
+);
 
 export default api;
