@@ -102,7 +102,7 @@ const LoginScreen = ({ navigation }: any) => {
                     <View style={[styles.logoIcon, { backgroundColor: colors.primary }]}>
                         <Sparkles color="white" size={24} />
                     </View>
-                    <VibeText variant="display" size="2xl" style={{ marginLeft: 10 }}>VibeTalk</VibeText>
+                    <VibeText variant="display" size="2xl" style={{ marginLeft: 10 }}>Half-found</VibeText>
                 </View>
 
                 {/* Hero Section */}

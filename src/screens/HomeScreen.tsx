@@ -103,7 +103,7 @@ const MOCK_PERSONAS = [
 type NotificationItem = {
     notificationId: string;
     type: string;
-    payload: { sessionId?: string; message?: string; senderName?: string; senderAvatar?: string; personaId?: string; [k: string]: any };
+    payload: { sessionId?: string; message?: string; senderName?: string; senderAvatar?: string; personaId?: string;[k: string]: any };
     createdAt: string;
     status: string;
 };
@@ -175,6 +175,7 @@ const HomeScreen = ({ navigation }: any) => {
     const [selectedPersona, setSelectedPersona] = useState<any>(null);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [activeMood, setActiveMood] = useState('');
     const [isSearching, setIsSearching] = useState(false);
     const [isAlertVisible, setIsAlertVisible] = useState(false);
@@ -183,9 +184,19 @@ const HomeScreen = ({ navigation }: any) => {
     const [alertConfig, setAlertConfig] = useState({ title: '', description: '', type: 'error' as any });
     const notificationSlideAnim = useRef(new Animated.Value(NOTIFICATION_PANEL_WIDTH)).current;
 
+    // Available Vibe Tags
+    const VIBE_TAGS = [
+        { id: 'humor', label: 'Funny', icon: '😂', color: '#FFD54F' },
+        { id: 'roast', label: 'Sassy', icon: '🔥', color: '#FF7043' },
+        { id: 'flirt', label: 'Flirt', icon: '💘', color: '#F06292' },
+        { id: 'energy', label: 'Hype', icon: '⚡', color: '#4FC3F7' },
+        { id: 'empathy', label: 'Kind', icon: '🌱', color: '#81C784' },
+        { id: 'anger', label: 'Edgy', icon: '💢', color: '#7986CB' },
+    ];
+
     useEffect(() => {
         fetchPersonas();
-    }, [activeMood]);
+    }, [activeMood, selectedTags]);
 
     useEffect(() => {
         if (isNotificationsVisible) {
@@ -206,18 +217,24 @@ const HomeScreen = ({ navigation }: any) => {
 
     const fetchPersonas = async (query?: string) => {
         try {
-            setLoading(true); // Always show loader on fetch for search/mood feedback
-
+            setLoading(true); 
 
             const params: any = {};
             if (activeMood) params.mood = activeMood;
-            if (query) params.search = query;
+            if (query !== undefined) {
+                params.search = query;
+            } else if (searchQuery) {
+                params.search = searchQuery;
+            }
+
+            if (selectedTags.length > 0) {
+                params.tags = selectedTags.join(',');
+            }
 
             const response = await api.get('/personas', { params });
             setPersonas(response.data.personas || []);
         } catch (error) {
             console.error('Failed to fetch personas:', error);
-            // Don't show alert if it's just a blank search result
             if (personas.length === 0) {
                 setAlertConfig({
                     title: 'Oops!',
@@ -232,13 +249,21 @@ const HomeScreen = ({ navigation }: any) => {
         }
     };
 
-    // Simple manual search trigger or we could use debouncing
+    const toggleTag = (tagId: string) => {
+        if (selectedTags.includes(tagId)) {
+            setSelectedTags(prev => prev.filter(id => id !== tagId));
+        } else {
+            setSelectedTags(prev => [...prev, tagId]);
+        }
+    };
+
     const handleSearch = () => {
         fetchPersonas(searchQuery);
     };
 
     const clearSearch = () => {
         setSearchQuery('');
+        setSelectedTags([]);
         setLoading(true);
         fetchPersonas('');
     };
@@ -263,6 +288,12 @@ const HomeScreen = ({ navigation }: any) => {
                     <View style={styles.onlineDot} />
                     <VibeText size="xs" color="white" variant="bold">ONLINE</VibeText>
                 </View>
+                {item.type === 'user' && (
+                    <View style={[styles.typeBadge, { backgroundColor: colors.primary }]}>
+                        <User size={10} color="white" fill="white" />
+                        <VibeText size="xs" color="white" variant="bold" style={{ marginLeft: 4 }}>HUMAN</VibeText>
+                    </View>
+                )}
                 <View style={styles.moodBadge}>
                     <VibeText size="xs" color="white" variant="bold">
                         {item.moodEmoji || '✨'} {item.mood}
@@ -271,14 +302,19 @@ const HomeScreen = ({ navigation }: any) => {
             </View>
             <View style={styles.cardInfo}>
                 <View style={styles.nameRow}>
-                    <VibeText variant="bold" style={styles.name}>{item.nickname}</VibeText>
+                    <View style={{ flex: 1, marginRight: 4 }}>
+                        <VibeText variant="bold" style={styles.name} numberOfLines={1}>{item.nickname}</VibeText>
+                        {item.username && (
+                            <VibeText size="xs" color={currentColors.muted} style={{ marginTop: -2 }} numberOfLines={1}>@{item.username}</VibeText>
+                        )}
+                    </View>
                     <VibeText size="xs">
                         {(() => {
                             if (!item.country) return '';
                             // Try mapping string to emoji
                             const countryKey = Object.keys(countryData).find(key => (countryData as any)[key].name === item.country);
                             if (countryKey) {
-                                return `${(countryData as any)[countryKey].emoji} ${item.country}`;
+                                return (countryData as any)[countryKey].emoji;
                             }
                             return item.country;
                         })()}
@@ -320,39 +356,68 @@ const HomeScreen = ({ navigation }: any) => {
                     <Search size={18} color={currentColors.muted} style={styles.searchIcon} />
                     <TextInput
                         style={[styles.searchInput, { color: currentColors.text }]}
-                        placeholder="Search by name, bio or interests..."
+                        placeholder="Search by name, bio or vibes..."
                         placeholderTextColor={currentColors.muted}
                         value={searchQuery}
                         onChangeText={setSearchQuery}
                         onSubmitEditing={handleSearch}
+                        onFocus={() => setIsSearching(true)}
                         returnKeyType="search"
                     />
-                    {searchQuery.length > 0 && (
+                    {(searchQuery.length > 0 || selectedTags.length > 0) && (
                         <TouchableOpacity onPress={clearSearch}>
                             <X size={18} color={currentColors.muted} />
                         </TouchableOpacity>
                     )}
                 </View>
 
-                {/* Mood Filters */}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterBar}>
-                    {MOODS.map(mood => {
-                        const isActive = activeMood === mood.mood;
+                {/* Selected Tags Chips */}
+                {selectedTags.length > 0 && (
+                    <View style={styles.selectedTagsContainer}>
+                        {selectedTags.map(tagId => {
+                            const tag = VIBE_TAGS.find(t => t.id === tagId);
+                            if (!tag) return null;
+                            return (
+                                <TouchableOpacity 
+                                    key={tagId} 
+                                    onPress={() => toggleTag(tagId)}
+                                    style={[styles.tagChip, { backgroundColor: tag.color + '33', borderColor: tag.color }]}
+                                >
+                                    <VibeText size="xs" variant="bold" color={tag.color}>{tag.icon} {tag.label}</VibeText>
+                                    <X size={12} color={tag.color} style={{ marginLeft: 4 }} />
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                )}
+
+                {/* Vibe Tag Suggestions (shown when searching) */}
+                <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false} 
+                    contentContainerStyle={styles.filterBar}
+                >
+                    {VIBE_TAGS.map(tag => {
+                        const isSelected = selectedTags.includes(tag.id);
                         return (
                             <TouchableOpacity
-                                key={mood.id}
-                                onPress={() => setActiveMood(mood.mood)}
+                                key={tag.id}
+                                onPress={() => toggleTag(tag.id)}
                                 style={[
                                     styles.filterItem,
-                                    { backgroundColor: isActive ? colors.primary : (isDark ? 'rgba(255,255,255,0.08)' : '#f5f5f5') }
+                                    { 
+                                        backgroundColor: isSelected ? tag.color : (isDark ? 'rgba(255,255,255,0.08)' : '#f5f5f5'),
+                                        borderColor: isSelected ? tag.color : 'transparent',
+                                        borderWidth: 1
+                                    }
                                 ]}
                             >
                                 <VibeText
                                     variant="semiBold"
                                     size="sm"
-                                    color={isActive ? 'white' : (isDark ? '#ccc' : '#666')}
+                                    color={isSelected ? 'white' : (isDark ? '#ccc' : '#666')}
                                 >
-                                    {mood.emoji} {mood.label}
+                                    {tag.icon} {tag.label}
                                 </VibeText>
                             </TouchableOpacity>
                         );
@@ -752,6 +817,16 @@ const styles = StyleSheet.create({
         backgroundColor: '#4ade80',
         marginRight: 4,
     },
+    typeBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 10,
+    },
     moodBadge: {
         position: 'absolute',
         bottom: 8,
@@ -981,7 +1056,22 @@ const styles = StyleSheet.create({
         borderRadius: 10,
         paddingVertical: 10,
         alignItems: 'center'
-    }
+    },
+    selectedTagsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        paddingHorizontal: 20,
+        marginBottom: 12,
+    },
+    tagChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+        borderWidth: 1,
+    },
 });
 
 export default HomeScreen;

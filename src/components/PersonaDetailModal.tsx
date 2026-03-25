@@ -18,12 +18,43 @@ import {
     X,
     MessageCircle,
     Zap,
-    Flag
+    Flag,
+    User
 } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+const VIBE_MAPPINGS: Record<string, { colors: [string, string], glow: string, descriptors: { high: string, low: string } }> = {
+    humor: { 
+        colors: ['#4facfe', '#00f2fe'], 
+        glow: '#00f2fe',
+        descriptors: { high: 'Witty & Playful', low: 'Serious & Direct' }
+    },
+    flirt: { 
+        colors: ['#f5576c', '#fbc2eb'], 
+        glow: '#f5576c',
+        descriptors: { high: 'Charming & Forward', low: 'Sweet & Reserved' }
+    },
+    energy: { 
+        colors: ['#f6d365', '#fda085'], 
+        glow: '#f6d365',
+        descriptors: { high: 'Hyper & Intense', low: 'Calm & Chill' }
+    },
+    empathy: { 
+        colors: ['#84fab0', '#8fd3f4'], glow: '#84fab0',
+        descriptors: { high: 'Kind & Caring', low: 'Detached & Logical' }
+    },
+    roast: { 
+        colors: ['#a18cd1', '#fbc2eb'], glow: '#a18cd1',
+        descriptors: { high: 'Sassy & Savage', low: 'Soft & Forgiving' }
+    },
+    anger: { 
+        colors: ['#ff0844', '#ffb199'], glow: '#ff0844',
+        descriptors: { high: 'Fiery & Edgy', low: 'Calm & Mellow' }
+    },
+};
 
 interface PersonaDetailModalProps {
     visible: boolean;
@@ -39,9 +70,33 @@ export const PersonaDetailModal: React.FC<PersonaDetailModalProps> = ({
     onChatRequest,
 }) => {
     const { colors, currentColors, isDark } = useTheme();
-
+    
     if (!persona) return null;
 
+    // ─── Aura & Trait Logic ──────────────────────────────────────────
+    const getAuraConfig = () => {
+        if (persona.type === 'user') {
+            return {
+                colors: ['#FFD700', '#9D50BB'] as [string, string], // Human Gold/Purple
+                glow: '#FFD700',
+                descriptors: { high: 'Vibrant soul', low: 'Humble soul' }
+            };
+        }
+
+        const sortedTraits = [...(persona.traits || [])].sort((a, b) => b.score - a.score);
+        const top = sortedTraits[0];
+
+        return VIBE_MAPPINGS[top?.name] || { 
+            colors: [colors.primary, '#ff4fa1'] as [string, string], 
+            glow: colors.primary,
+            descriptors: { high: 'Unique Vibe', low: 'Balanced' }
+        };
+    };
+
+    const aura = getAuraConfig();
+    const topTraits = [...(persona.traits || [])]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3);
     return (
         <Modal
             visible={visible}
@@ -67,9 +122,9 @@ export const PersonaDetailModal: React.FC<PersonaDetailModalProps> = ({
                     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
                         {/* Profile Header */}
                         <View style={styles.header}>
-                            <View style={styles.avatarContainer}>
+                            <View style={[styles.avatarContainer, { shadowColor: aura.glow, shadowOpacity: 0.5, shadowRadius: 15 }]}>
                                 <LinearGradient
-                                    colors={[colors.primary, '#ff4fa1']}
+                                    colors={aura.colors as [string, string]}
                                     style={styles.avatarGradient}
                                 >
                                     <View style={[styles.avatarBorder, { backgroundColor: currentColors.surface }]}>
@@ -92,9 +147,24 @@ export const PersonaDetailModal: React.FC<PersonaDetailModalProps> = ({
                             <VibeText variant="display" size="2xl" style={styles.nickname}>
                                 {persona.nickname}
                             </VibeText>
-                            <VibeText color={colors.primary} size="sm" variant="medium">
-                                @{persona.nickname?.toLowerCase().replace(/\s/g, '_')}
-                            </VibeText>
+                            {persona.username ? (
+                                <VibeText color={colors.primary} size="sm" variant="medium">
+                                    @{persona.username}
+                                </VibeText>
+                            ) : (
+                                <VibeText color={colors.primary} size="sm" variant="medium">
+                                    @{persona.nickname?.toLowerCase().replace(/\s/g, '_')}
+                                </VibeText>
+                            )}
+
+                            {persona.type === 'user' && (
+                                <View style={[styles.badge, { backgroundColor: `${colors.primary}1A`, borderColor: `${colors.primary}33`, marginTop: 8 }]}>
+                                    <User size={12} color={colors.primary} fill={colors.primary} />
+                                    <VibeText variant="bold" size="xs" color={colors.primary} style={styles.badgeText}>
+                                        Human User
+                                    </VibeText>
+                                </View>
+                            )}
                         </View>
 
                         {/* Bio */}
@@ -123,30 +193,51 @@ export const PersonaDetailModal: React.FC<PersonaDetailModalProps> = ({
                             </View>
                         )}
 
-                        {/* Conversation Style */}
+                        {/* Personality Vibes (Dynamic Traits) */}
                         <View style={styles.section}>
                             <VibeText variant="bold" size="xs" color={currentColors.muted} style={styles.sectionTitle}>
-                                CONVERSATION STYLE
+                                PERSONALITY VIBE
                             </VibeText>
                             <View style={styles.styleGrid}>
-                                <View style={[styles.styleCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f0f0f0' }]}>
-                                    <View style={[styles.styleIcon, { backgroundColor: `${colors.primary}20` }]}>
-                                        <MessageCircle size={18} color={colors.primary} />
+                                {topTraits.map((trait, index) => (
+                                    <View 
+                                        key={trait.name} 
+                                        style={[
+                                            styles.styleCard, 
+                                            { 
+                                                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f0f0f0',
+                                                borderColor: index === 0 ? `${aura.glow}40` : 'transparent',
+                                                borderWidth: index === 0 ? 1 : 0
+                                            }
+                                        ]}
+                                    >
+                                        <View style={[styles.styleIcon, { backgroundColor: `${aura.colors[0]}20` }]}>
+                                            <VibeText size="lg">{trait.icon || '✨'}</VibeText>
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <VibeText variant="bold" size="sm" style={{ marginBottom: 2 }}>{trait.displayName}</VibeText>
+                                            <VibeText size="xs" color={currentColors.muted} style={{ marginBottom: 6 }}>
+                                                {trait.score > 0.6 
+                                                    ? VIBE_MAPPINGS[trait.name]?.descriptors.high 
+                                                    : (trait.score < 0.3 ? VIBE_MAPPINGS[trait.name]?.descriptors.low : 'Balanced')}
+                                            </VibeText>
+                                            <View style={styles.progressBg}>
+                                                <View 
+                                                    style={[
+                                                        styles.progressFill, 
+                                                        { 
+                                                            width: `${trait.score * 100}%`,
+                                                            backgroundColor: index === 0 ? aura.glow : currentColors.muted
+                                                        }
+                                                    ]} 
+                                                />
+                                            </View>
+                                        </View>
+                                        <VibeText variant="bold" size="xs" color={currentColors.muted} style={{ marginLeft: 8 }}>
+                                            {Math.round(trait.score * 100)}%
+                                        </VibeText>
                                     </View>
-                                    <View>
-                                        <VibeText variant="bold" size="sm">Deep Talker</VibeText>
-                                        <VibeText size="xs" color={currentColors.muted}>Loves long convos</VibeText>
-                                    </View>
-                                </View>
-                                <View style={[styles.styleCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f0f0f0' }]}>
-                                    <View style={[styles.styleIcon, { backgroundColor: `#60a5fa20` }]}>
-                                        <Zap size={18} color="#60a5fa" />
-                                    </View>
-                                    <View>
-                                        <VibeText variant="bold" size="sm">Fast Reply</VibeText>
-                                        <VibeText size="xs" color={currentColors.muted}>Instant responses</VibeText>
-                                    </View>
-                                </View>
+                                ))}
                             </View>
                         </View>
                     </ScrollView>
@@ -274,20 +365,33 @@ const styles = StyleSheet.create({
         borderWidth: 1,
     },
     styleGrid: {
-        flexDirection: 'row',
-        gap: 12,
+        marginTop: 4,
     },
     styleCard: {
-        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         padding: 12,
         borderRadius: 20,
-        gap: 12,
+        marginBottom: 10,
     },
     styleIcon: {
-        padding: 8,
-        borderRadius: 12,
+        width: 44,
+        height: 44,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 16,
+    },
+    progressBg: {
+        height: 4,
+        backgroundColor: 'rgba(0,0,0,0.1)',
+        borderRadius: 2,
+        marginTop: 6,
+        width: '100%',
+    },
+    progressFill: {
+        height: '100%',
+        borderRadius: 2,
     },
     footer: {
         position: 'absolute',

@@ -251,7 +251,7 @@ const ProfileScreen = ({ navigation }: any) => {
                 </TouchableOpacity>
 
                 <View style={styles.footer}>
-                    <VibeText size="xs" color={currentColors.muted}>VibeTalk v1.0.0</VibeText>
+                    <VibeText size="xs" color={currentColors.muted}>Half-found v1.0.0</VibeText>
                     <VibeText size="xs" color={currentColors.muted} style={{ marginTop: 4 }}>End-to-End Encrypted</VibeText>
                 </View>
             </ScrollView>

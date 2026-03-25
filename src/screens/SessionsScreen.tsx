@@ -105,7 +105,12 @@ const SessionsScreen = ({ navigation }: any) => {
 
                 <View style={styles.sessionInfo}>
                     <View style={styles.sessionHeader}>
-                        <VibeText variant="bold" size="md">{persona?.nickname || 'Stranger'}</VibeText>
+                        <View style={{ flex: 1 }}>
+                            <VibeText variant="bold" size="md" numberOfLines={1}>{persona?.nickname || 'Stranger'}</VibeText>
+                            {persona?.username && (
+                                <VibeText size="xs" color={currentColors.muted} style={{ marginTop: -2 }} numberOfLines={1}>@{persona.username}</VibeText>
+                            )}
+                        </View>
                         <VibeText size="xs" color={currentColors.muted}>{timeAgo}</VibeText>
                     </View>
 

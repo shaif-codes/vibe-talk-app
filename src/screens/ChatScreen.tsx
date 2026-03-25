@@ -388,9 +388,15 @@ const ChatScreen = ({ navigation, route }: any) => {
                         <View style={styles.nameRow}>
                             <VibeText variant="bold" size="sm">{displayPersona?.nickname || 'Stranger'}</VibeText>
                         </View>
-                        <VibeText size="xs" color={colors.primary} variant="semiBold" style={{ letterSpacing: 1 }}>
-                            <ShieldCheck size={12} color={colors.primary} /> END-TO-END ENCRYPTED
-                        </VibeText>
+                        {(displayPersona as any)?.username ? (
+                            <VibeText size="xs" color={currentColors.muted} style={{ marginTop: -2 }}>
+                                @{(displayPersona as any).username}
+                            </VibeText>
+                        ) : (
+                            <VibeText size="xs" color={colors.primary} variant="semiBold" style={{ letterSpacing: 1 }}>
+                                <ShieldCheck size={12} color={colors.primary} /> END-TO-END ENCRYPTED
+                            </VibeText>
+                        )}
                     </View>
 
                     <TouchableOpacity style={[styles.iconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#eee' }]}>
@@ -398,34 +404,36 @@ const ChatScreen = ({ navigation, route }: any) => {
                     </TouchableOpacity>
                 </View>
 
-                {/* Timer */}
-                <View style={styles.timerContainer}>
-                    <Animated.View style={[
-                        styles.timerBadge,
-                        {
-                            backgroundColor: remainingTime > 15 ? colors.primary : (remainingTime > 0 ? colors.accent.red : colors.accent.red),
-                            transform: [{ scale: timerScale }]
-                        }
-                    ]}>
-                        <Clock size={14} color="white" />
-                        <VibeText variant="bold" size="xs" color="white" style={{ marginLeft: 6 }}>
-                            {remainingTime > 0 ? formatTime(remainingTime) : '00:00'} LEFT
-                        </VibeText>
-                        {remainingTime === 0 && (
-                            <TouchableOpacity style={{ marginLeft: 8 }} onPress={() => {
-                                setAlertConfig({
-                                    title: 'Time Up!',
-                                    description: 'Your free vibes are over. Ready for more?',
-                                    type: 'error',
-                                    buttonText: 'Extend (25 Coins)',
-                                });
-                                setIsAlertVisible(true);
-                            }}>
-                                <PlusCircle size={14} color="white" />
-                            </TouchableOpacity>
-                        )}
-                    </Animated.View>
-                </View>
+                {/* Timer - Only show when < 2 minutes remain or expired */}
+                {remainingTime >= 0 && remainingTime <= 120 && (
+                    <View style={styles.timerContainer}>
+                        <Animated.View style={[
+                            styles.timerBadge,
+                            {
+                                backgroundColor: remainingTime > 15 ? colors.primary : (remainingTime > 0 ? colors.accent.red : colors.accent.red),
+                                transform: [{ scale: timerScale }]
+                            }
+                        ]}>
+                            <Clock size={14} color="white" />
+                            <VibeText variant="bold" size="xs" color="white" style={{ marginLeft: 6 }}>
+                                {remainingTime > 0 ? formatTime(remainingTime) : '00:00'} LEFT
+                            </VibeText>
+                            {remainingTime === 0 && (
+                                <TouchableOpacity style={{ marginLeft: 8 }} onPress={() => {
+                                    setAlertConfig({
+                                        title: 'Time Up!',
+                                        description: 'Your free vibes are over. Ready for more?',
+                                        type: 'error',
+                                        buttonText: 'Extend (25 Coins)',
+                                    });
+                                    setIsAlertVisible(true);
+                                }}>
+                                    <PlusCircle size={14} color="white" />
+                                </TouchableOpacity>
+                            )}
+                        </Animated.View>
+                    </View>
+                )}
             </View>
 
             {/* Content */}
