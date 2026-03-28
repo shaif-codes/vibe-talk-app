@@ -17,6 +17,7 @@ import { VibeAlert } from '../components/VibeAlert';
 import { containerStyles } from '../configs';
 import api from '../services/api';
 import * as SecureStore from 'expo-secure-store';
+import crashlytics from '@react-native-firebase/crashlytics';
 
 const TALK_TO_OPTIONS = [
     { label: 'Male', value: 'male' },
@@ -110,6 +111,9 @@ const PreferencesScreen = ({ navigation, route }: any) => {
                 routes: [{ name: 'Home' }],
             });
         } catch (error) {
+            crashlytics().log('Preferences saving/Signup failed');
+            crashlytics().recordError(error instanceof Error ? error : new Error(String(error)));
+            
             console.error('Failed to save preferences:', error);
             setAlertConfig({
                 title: 'Error',

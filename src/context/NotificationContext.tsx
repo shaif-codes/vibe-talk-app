@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './AuthContext';
+import { Vibration } from 'react-native';
 import socketService from '../services/socket';
+import audioService from '../services/audioService';
 
 export type NotificationPayload = {
     sessionId?: string;
@@ -46,6 +48,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             setNotifications((prev) => {
                 const exists = prev.some((item) => item.notificationId === data.notificationId);
                 if (exists) return prev;
+
+                // Trigger haptic and sound feedback for new notifications
+                Vibration.vibrate(100);
+                audioService.playNotificationSound();
+
                 return [{ ...data, status: 'sent' }, ...prev];
             });
 

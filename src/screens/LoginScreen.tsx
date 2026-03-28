@@ -18,6 +18,7 @@ import { Sparkles, Heart, MessageCircle, ShieldCheck } from 'lucide-react-native
 import { containerStyles, googleAuthConfigs } from '../configs';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import * as WebBrowser from 'expo-web-browser';
+import crashlytics from '@react-native-firebase/crashlytics';
 
 // Required for Expo WebBrowser
 WebBrowser.maybeCompleteAuthSession();
@@ -55,6 +56,10 @@ const LoginScreen = ({ navigation }: any) => {
                 navigation.navigate('ProfileSetup', { firebaseToken: idToken });
             }
         } catch (error: any) {
+            console.log("Error", error)
+            crashlytics().log('Google Sign-In Modal Flow failed or was cancelled');
+            crashlytics().recordError(error instanceof Error ? error : new Error(String(error)));
+            
             setAlertConfig({
                 title: 'Login Failed',
                 description: `Unable to sign in with Google (Error: ${error.code || 'Unknown'}). Please try again.`,

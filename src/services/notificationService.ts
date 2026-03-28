@@ -79,24 +79,8 @@ class NotificationService {
         // Handle foreground notifications
         const unsubscribeForeground = messaging().onMessage(async (remoteMessage) => {
             console.log('📬 Foreground notification received:', remoteMessage);
-
-            // Show in-app notification
-            if (remoteMessage.notification) {
-                Alert.alert(
-                    remoteMessage.notification.title || 'New Notification',
-                    remoteMessage.notification.body || '',
-                    [
-                        {
-                            text: 'Dismiss',
-                            style: 'cancel'
-                        },
-                        {
-                            text: 'View',
-                            onPress: () => this.handleNotificationTap(remoteMessage, navigation)
-                        }
-                    ]
-                );
-            }
+            // In-app pop-up alerts are disabled per user request.
+            // Notifications are handled via vibration/sound in NotificationContext.
         });
 
         // Handle notification tap when app is in background
